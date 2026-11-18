@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GEN SPORTS Admin</title><meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="assets/logo.png"><link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>window.supabase||document.write('<script src="https://unpkg.com/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"><\/script>')</script>
+<script src="config.js"></script>
+</head>
+<body>
+<div id="login" class="lg" hidden>
+<img src="assets/logo.png" alt="GEN SPORTS"><h1>Admin login</h1>
+<form id="lf"><label>Email<input name="email" type="email" required autocomplete="username"></label>
+<label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+<p id="lerr" class="dg"></p><button class="pri">Sign in</button></form></div>
+<div id="app" hidden><aside id="side"></aside><main id="main"></main></div>
+<div id="toast" role="status"></div>
+<script>
+(()=>{let m='';
+ if(typeof supabase==='undefined')m='Supabase library load nathi thayi. Internet check karo, pachhi page refresh karo.';
+ else if(typeof GEN==='undefined')m='config.js male nathi. config.js file index.html/admin.html jevi j folder ma hovi joiye.';
+ else if(/YOUR-/.test(GEN.url+GEN.key)||!GEN.url||!GEN.key)m='config.js ma Supabase Project URL ane anon public key paste karo (hajiy YOUR-... lakhelu chhe).';
+ if(m){document.body.insertAdjacentHTML('afterbegin','<div style="padding:24px;max-width:560px;margin:8vh auto;border:1px solid #ff6b6b;border-radius:12px;color:#fff;background:#1b0d12;font:16px/1.5 system-ui"><b>Setup needed</b><p>'+m+'</p></div>');throw new Error(m)}})();
+const sb=supabase.createClient(GEN.url,GEN.key),$=s=>document.querySelector(s);
+const h=v=>String(v??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const slug=s=>s.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+const toast=m=>{const t=$('#toast');t.textContent=m;t.className='on';setTimeout(()=>t.className='',2400)};
+const ok=r=>{if(r.error){toast(r.error.message);throw r.error}return r.data};
+const tbl=(t)=>sb.from(t).select('*').order('sort').order('created_at');
+let cur='ov',L={},SUB=null,CS=null,SPG=null,PF='all';
+const V={ov:'Overview',pg:'Sports & Pages',sc:'Sections',ct:'Content',nv:'Navigation',st:'Site Settings',pf:'Profile'};
+const DT=[['info','Information boxes'],['text','Text section'],['table','Table'],['list','List'],['cards','Cards'],['stats','Statistics boxes'],['announcement','Announcements'],['news','News'],['custom','Custom data'],['category','Category chips']];
+const FT=['text','longtext','number','date','dropdown','url','status'];
+const ST=['draft','published'];
+
+/* ---------- auth ---------- */
+function showLogin(m){$('#app').hidden=true;$('#login').hidden=false;$('#lerr').textContent=m||''}
+async function init(){
+ const {data:{session}}=await sb.auth.getSession();
+ if(!session)return showLogin();
+ const a=await sb.from('admins').select('user_id').maybeSingle();
+ if(!a.data){await sb.auth.signOut();return showLogin('This account is not an administrator.')}
+ $('#login').hidden=true;$('#app').hidden=false;go('ov');
+}
+$('#lf').onsubmit=async e=>{e.preventDefault();const f=e.target,r=await sb.auth.signInWithPassword({email:f.email.value,password:f.password.value});if(r.error)return $('#lerr').textContent=r.error.message;init()};
+
+/* ---------- helpers ---------- */
+function inp(f,v){
+ if(f.t==='area')return `<textarea name="${f.k}"${f.r?' required':''}>${h(v)}</textarea>`;
+ if(f.t==='select')return `<select name="${f.k}">${f.o.map(o=>{const[a,b]=Array.isArray(o)?o:[o,o];return `<option value="${h(a)}"${a==v?' selected':''}>${h(b)}</option>`}).join('')}</select>`;
+ if(f.t==='check')return `<input type="checkbox" name="${f.k}"${v?' checked':''}>`;
+ return `<input name="${f.k}" type="${f.t||'text'}"${f.t==='number'?' step="any"':''} value="${h(v)}"${f.r?' required':''}>`;
+}
+const read=(form,spec)=>{const o={};spec.forEach(f=>{const e=form.elements[f.k];o[f.k]=f.t==='check'?e.checked:(e.value===''&&f.nul?null:e.value)});return o};
+function fm(spec,val,title,save,extra=''){
+ SUB=async f=>{await save(read(f,spec),f)};
+ return `<form id="f" class="card" data-new="${val.id?'':1}"><h3>${title}</h3>${spec.map(f=>`<label>${f.l}${inp(f,val[f.k])}</label>`).join('')}${extra}<div class="acts"><button class="pri">Save</button><button type="button" data-a="cx">Cancel</button></div></form>`;
+}
+async function mv(t,rows,i,d){const j=i+d;if(j<0||j>=rows.length)return;const a=rows.map((_,n)=>n);[a[i],a[j]]=[a[j],a[i]];await Promise.all(rows.map((r,n)=>sb.from(t).update({sort:a[n]}).eq('id',r.id)))}
+const rowH=(t,i,r,title,sub,extra='')=>{
+ const D=`data-t="${t}" data-id="${r.id}"`;
+ return `<div class="item"><div class="it"><b>${h(title)}</b><small>${h(sub)}</small>${'status'in r?`<span class="badge ${r.status}">${r.status}</span>`:''}${'visible'in r&&!r.visible?'<span class="badge">hidden</span>':''}</div><div class="acts">${extra}
+ ${'status'in r?`<button data-a="tg" ${D} data-f="status" data-v="${r.status==='published'?'draft':'published'}">${r.status==='published'?'Unpublish':'Publish'}</button>`:''}
+ ${'visible'in r?`<button data-a="tg" ${D} data-f="visible" data-v="${!r.visible}">${r.visible?'Hide':'Show'}</button>`:''}
+ <button data-a="mv" data-t="${t}" data-i="${i}" data-d="-1" aria-label="Move up">↑</button><button data-a="mv" data-t="${t}" data-i="${i}" data-d="1" aria-label="Move down">↓</button>
+ <button data-a="ed" ${D}>Edit</button><button data-a="dup" ${D}>Duplicate</button><button class="dg" data-a="del" ${D}>Delete</button></div></div>`;
+};
+const bar=(t,btn)=>`<div class="bar"><h2>${t}</h2>${btn||''}</div>`;
+
+/* ---------- navigation ---------- */
+async function go(v){
+ cur=v;
+ $('#side').innerHTML=`<a class="brand" href="index.html" target="_blank" aria-label="View public site"><img src="assets/logo.png" alt="GEN SPORTS"></a>`+Object.entries(V).map(([k,t])=>`<button data-a="go" data-v="${k}" class="${k===v?'on':''}">${t}</button>`).join('')+'<button data-a="out">Log out</button>';
+ try{await ({ov:vOv,pg:vPg,sc:vSc,ct:vCt,nv:vNv,st:vSt,pf:vPf})[v]()}catch(e){console.error(e)}
+}
+
+/* ---------- views ---------- */
+async function vOv(){
+ const c=async(t,q)=>{let r=sb.from(t).select('id',{count:'exact',head:true});if(q)r=r.eq(...q);return (await r).count||0};
+ const [sp,pg,sc,rc,dr]=await Promise.all([c('pages',['kind','sport']),c('pages'),c('sections'),c('records'),c('records',['status','draft'])]);
+ const k=(n,l)=>`<div class="card"><div class="big">${n}</div><div class="mu">${l}</div></div>`;
+ $('#main').innerHTML=bar('Overview')+`<div class="stat-grid">${k(sp,'Sports')}${k(pg,'Pages (all)')}${k(sc,'Sections')}${k(rc,'Records')}${k(dr,'Draft records')}</div>
+ <div class="acts"><button class="pri" data-a="qs">+ Add sport</button><button data-a="go" data-v="sc">+ Add section</button><button data-a="go" data-v="ct">+ Add content</button><a class="btn" href="index.html" target="_blank">View public site</a></div>
+ <p class="mu">Steps: 1) add a sport or page, 2) add a section and define its fields, 3) add content records, 4) publish. Only published items appear publicly.</p>`;
+}
+async function vPg(){
+ const all=ok(await tbl('pages'));L.all=all;
+ const rows=all.filter(p=>PF==='all'||p.kind===PF);L.pages=rows;
+ $('#main').innerHTML=bar('Sports & Pages',`<select data-c="flt" aria-label="Filter">${[['all','All'],['sport','Sports'],['page','Pages'],['legal','Legal / info']].map(([v,t])=>`<option value="${v}"${v===PF?' selected':''}>${t}</option>`).join('')}</select><button class="pri" data-a="ed" data-t="pages">+ New</button>`)+
+ `<div id="ed"></div><div>${rows.map((p,i)=>rowH('pages',i,p,p.title,`/${p.slug} · ${p.kind}${p.parent_id?' · category of '+(all.find(x=>x.id===p.parent_id)?.title||'?'):''}`,`<a class="btn" href="index.html#/p/${h(p.slug)}?preview=1" target="_blank">Preview</a>`)).join('')||'<p class="mu">Nothing here yet. Click + New to add your first sport.</p>'}</div>`;
+}
+async function vSc(){
+ const pgs=ok(await tbl('pages'));L.all=pgs;
+ if(!pgs.length){$('#main').innerHTML=bar('Sections')+'<p class="mu">Create a sport or page first.</p>';return}
+ if(!pgs.find(p=>p.id===SPG))SPG=pgs[0].id;
+ const pg=pgs.find(p=>p.id===SPG),rows=ok(await sb.from('sections').select('*').eq('page_id',SPG).order('sort'));L.sections=rows;
+ $('#main').innerHTML=bar('Sections',`<select data-c="spg" aria-label="Page">${pgs.map(p=>`<option value="${p.id}"${p.id===SPG?' selected':''}>${h(p.title)}</option>`).join('')}</select><button class="pri" data-a="ed" data-t="sections">+ New section</button>`)+
+ `<div id="ed"></div><div>${rows.map((s,i)=>rowH('sections',i,s,s.title,DT.find(d=>d[0]===s.display_type)[1],`<a class="btn" href="index.html#/p/${h(pg.slug)}?preview=1" target="_blank">Preview</a>`)).join('')||'<p class="mu">No sections on this page yet.</p>'}</div>`;
+}
+async function vCt(){
+ const ss=ok(await sb.from('sections').select('*,pages(title)').order('created_at'));
+ if(!ss.length){$('#main').innerHTML=bar('Content')+'<p class="mu">Create a section first.</p>';return}
+ if(!ss.find(s=>s.id===CS))CS=ss[0].id;
+ L.fields=ok(await sb.from('section_fields').select('*').eq('section_id',CS).order('sort'));
+ const rows=ok(await sb.from('records').select('*').eq('section_id',CS).order('sort').order('created_at'));L.records=rows;
+ $('#main').innerHTML=bar('Content',`<select data-c="cs" aria-label="Section">${ss.map(s=>`<option value="${s.id}"${s.id===CS?' selected':''}>${h(s.pages?.title)} › ${h(s.title)}</option>`).join('')}</select><button class="pri" data-a="ed" data-t="records">+ New record</button>`)+
+ (L.fields.length?'':'<p class="dg">This section has no fields yet. Open Sections › Edit and add fields first.</p>')+
+ `<div id="ed"></div><div>${rows.map((r,i)=>rowH('records',i,r,L.fields.slice(0,2).map(f=>r.data[f.key]).filter(Boolean).join(' · ')||'(empty)',new Date(r.created_at).toLocaleString())).join('')||'<p class="mu">No records yet.</p>'}</div>`;
+}
+async function vNv(){
+ const rows=ok(await tbl('nav_items'));L.nav_items=rows;
+ $('#main').innerHTML=bar('Navigation','<button class="pri" data-a="ed" data-t="nav_items">+ Add link</button>')+'<p class="mu">Published sports are added to the menu automatically. Add extra links here: a page like #/p/about, or a full https:// address.</p><div id="ed"></div><div>'+rows.map((n,i)=>rowH('nav_items',i,n,n.label,n.url)).join('')+'</div>';
+}
+async function vSt(){
+ const s={};ok(await sb.from('settings').select('*')).forEach(r=>s[r.key]=r.value);
+ const spec=[{k:'site_name',l:'Site name'},{k:'tagline',l:'Tagline'},{k:'footer_text',l:'Footer text',t:'area'},{k:'ads',l:'Ad placements',t:'select',o:[['off','Off'],['on','On']]},{k:'adsense_client',l:'AdSense publisher ID (ca-pub-…), optional'}];
+ $('#main').innerHTML=bar('Site Settings')+fm(spec,s,'Settings',async o=>{ok(await sb.from('settings').upsert(Object.entries(o).map(([key,value])=>({key,value}))));toast('Saved')});
+}
+async function vPf(){
+ const {data:{user}}=await sb.auth.getUser();
+ $('#main').innerHTML=bar('Profile')+`<div class="card"><p>Signed in as <b>${h(user.email)}</b></p></div><br>`+fm([{k:'password',l:'New password (min 8 characters)',t:'password',r:1}],{},'Change password',async o=>{ok(await sb.auth.updateUser({password:o.password}));toast('Password updated');go('pf')});
+}
+
+/* ---------- editors ---------- */
+const fr=f=>`<div class="fr" data-key="${h(f.key||'')}"><input class="fl" placeholder="Field label" value="${h(f.label)}"><select class="ft">${FT.map(t=>`<option${t==f.type?' selected':''}>${t}</option>`).join('')}</select><input class="fo" placeholder="Options (comma separated, for dropdown/status)" value="${h(f.options)}"><input class="fd" placeholder="Default value" value="${h(f.default_value)}"><label><input type="checkbox" class="fq"${f.required?' checked':''}> Required</label><span class="acts"><button type="button" data-a="fmv" data-d="-1">↑</button><button type="button" data-a="fmv" data-d="1">↓</button><button type="button" class="dg" data-a="fx">Remove</button></span></div>`;
+const E={
+ pages(r){
+  const v=r||{kind:PF==='all'?'page':PF,status:'draft',visible:true};
+  const spec=[{k:'title',l:'Title',r:1},{k:'slug',l:'URL slug',r:1},{k:'kind',l:'Type',t:'select',o:[['sport','Sport'],['page','Page'],['legal','Legal / info page']]},{k:'parent_id',l:'Parent (choose one to make this a category)',t:'select',nul:1,o:[['','— none —'],...L.all.filter(x=>x.id!==v.id).map(x=>[x.id,x.title])]},{k:'description',l:'Description',t:'area'},{k:'status',l:'Status',t:'select',o:ST},{k:'visible',l:'Visible',t:'check'}];
+  $('#ed').innerHTML=fm(spec,v,r?'Edit':'New',async o=>{o.slug=slug(o.slug);o.sort=r?r.sort:L.pages.length;ok(await(r?sb.from('pages').update(o).eq('id',r.id):sb.from('pages').insert(o)));toast('Saved');go('pg')});
+ },
+ async sections(r){
+  const v=r||{display_type:'cards',status:'draft',visible:true,page_id:SPG};
+  const fs=r?ok(await sb.from('section_fields').select('*').eq('section_id',r.id).order('sort')):[];
+  const spec=[{k:'page_id',l:'Shown on page',t:'select',o:L.all.map(p=>[p.id,p.title])},{k:'title',l:'Section title',r:1},{k:'description',l:'Description (optional)',t:'area'},{k:'display_type',l:'Display type',t:'select',o:DT},{k:'status',l:'Status',t:'select',o:ST},{k:'visible',l:'Visible',t:'check'}];
+  const extra=`<h4>Custom fields</h4><div id="frs">${fs.map(fr).join('')}</div><button type="button" data-a="fadd">+ Add field</button><br><br>`;
+  $('#ed').innerHTML=fm(spec,v,r?'Edit section':'New section',async(o,f)=>{
+   o.sort=r?r.sort:L.sections.length;
+   const s=ok(await(r?sb.from('sections').update(o).eq('id',r.id).select().single():sb.from('sections').insert(o).select().single()));
+   const used=new Set([...f.querySelectorAll('.fr')].map(x=>x.dataset.key).filter(Boolean));
+   const rows=[...f.querySelectorAll('.fr')].filter(x=>x.querySelector('.fl').value.trim()).map((x,i)=>{
+    const label=x.querySelector('.fl').value.trim();let k=x.dataset.key;
+    if(!k){k=slug(label).replace(/-/g,'_')||'f'+i;while(used.has(k))k+='_'+i;used.add(k)}
+    return{section_id:s.id,label,key:k,type:x.querySelector('.ft').value,required:x.querySelector('.fq').checked,options:x.querySelector('.fo').value.trim()||null,default_value:x.querySelector('.fd').value.trim()||null,sort:i}});
+   ok(await sb.from('section_fields').delete().eq('section_id',s.id));
+   if(rows.length)ok(await sb.from('section_fields').insert(rows));
+   toast('Saved');SPG=s.page_id;go('sc');
+  },extra);
+ },
+ records(r){
+  const opts=f=>(f.options||(f.type==='status'?'Active,Inactive':'')).split(',').map(x=>x.trim()).filter(Boolean);
+  const spec=[...L.fields.map(f=>({k:'f_'+f.key,l:f.label+(f.required?' *':''),r:f.required,t:{longtext:'area',number:'number',date:'date',url:'url',dropdown:'select',status:'select'}[f.type]||'text',o:f.required?opts(f):[['','—'],...opts(f)]})),{k:'status',l:'Status',t:'select',o:ST}];
+  const v={status:r?r.status:'draft'};L.fields.forEach(f=>v['f_'+f.key]=r?r.data[f.key]:f.default_value);
+  $('#ed').innerHTML=fm(spec,v,r?'Edit record':'New record',async o=>{
+   const data={};L.fields.forEach(f=>data[f.key]=o['f_'+f.key]);
+   const p={section_id:CS,data,status:o.status,sort:r?r.sort:L.records.length};
+   ok(await(r?sb.from('records').update(p).eq('id',r.id):sb.from('records').insert(p)));toast('Saved');go('ct');
+  });
+ },
+ nav_items(r){
+  const spec=[{k:'label',l:'Label',r:1},{k:'url',l:'Link (#/p/slug or https://…)',r:1},{k:'visible',l:'Visible',t:'check'}];
+  $('#ed').innerHTML=fm(spec,r||{visible:true},r?'Edit link':'New link',async o=>{o.sort=r?r.sort:L.nav_items.length;ok(await(r?sb.from('nav_items').update(o).eq('id',r.id):sb.from('nav_items').insert(o)));toast('Saved');go('nv')});
+ }
+};
+
+/* ---------- actions ---------- */
+const A={
+ go:d=>go(d.v),out:async()=>{await sb.auth.signOut();location.reload()},cx:()=>go(cur),
+ flt:d=>{PF=d.v;go('pg')},spg:d=>{SPG=d.v;go('sc')},cs:d=>{CS=d.v;go('ct')},
+ qs:async()=>{PF='sport';await go('pg');E.pages(null)},
+ ed:async d=>{if(!$('#ed'))return;await E[d.t](d.id?L[d.t].find(x=>x.id===d.id):null);$('#ed').scrollIntoView({behavior:'smooth'})},
+ tg:async d=>{ok(await sb.from(d.t).update({[d.f]:d.v==='true'?true:d.v==='false'?false:d.v}).eq('id',d.id));toast('Updated');go(cur)},
+ mv:async d=>{await mv(d.t,L[d.t],+d.i,+d.d);go(cur)},
+ del:async d=>{if(!confirm('Delete permanently? This also deletes everything inside it.'))return;ok(await sb.from(d.t).delete().eq('id',d.id));toast('Deleted');go(cur)},
+ dup:async d=>{
+  const c={...L[d.t].find(x=>x.id===d.id)};delete c.id;delete c.created_at;delete c.updated_at;c.sort=L[d.t].length;
+  for(const k of['title','label'])if(c[k])c[k]+=' (copy)';
+  if(c.slug)c.slug+='-copy-'+Math.random().toString(36).slice(2,6);
+  if('status'in c)c.status='draft';
+  const n=ok(await sb.from(d.t).insert(c).select().single());
+  if(d.t==='sections'){
+   const f=ok(await sb.from('section_fields').select('*').eq('section_id',d.id)),r=ok(await sb.from('records').select('*').eq('section_id',d.id));
+   if(f.length)ok(await sb.from('section_fields').insert(f.map(({id,...x})=>({...x,section_id:n.id}))));
+   if(r.length)ok(await sb.from('records').insert(r.map(({id,created_at,updated_at,...x})=>({...x,section_id:n.id,status:'draft'}))));
+  }
+  toast('Duplicated as draft');go(cur);
+ },
+ fadd:()=>$('#frs').insertAdjacentHTML('beforeend',fr({type:'text'})),
+ fx:(d,b)=>b.closest('.fr').remove(),
+ fmv:(d,b)=>{const r=b.closest('.fr');d.d==='-1'?r.previousElementSibling?.before(r):r.nextElementSibling?.after(r)}
+};
+document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]');if(!b)return;try{await A[b.dataset.a](b.dataset,b)}catch(x){console.error(x)}});
+document.addEventListener('change',e=>{if(e.target.dataset.c)A[e.target.dataset.c]({v:e.target.value})});
+document.addEventListener('submit',async e=>{e.preventDefault();if(e.target.id==='f'&&SUB)try{await SUB(e.target)}catch(x){console.error(x)}});
+document.addEventListener('input',e=>{const f=e.target.form;if(e.target.name==='title'&&f&&f.dataset.new&&f.elements.slug)f.elements.slug.value=slug(e.target.value)});
+init();
+</script>
+</body>
+</html>
